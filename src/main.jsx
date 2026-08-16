@@ -1,35 +1,51 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { createClient } from "@supabase/supabase-js";
 import App from "./App.jsx";
 
 /*
-  This app was originally built as a Claude artifact using window.storage
-  (Claude's built-in persistence API). Outside claude.ai that API doesn't
-  exist, so this shim reimplements the same get/set/delete/list interface
-  on top of the browser's localStorage, keyed under "spidey:".
+ 
 */
-const PREFIX = "spidey:";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+function stripPrefix(key) {
+  return key.startsWith("day:") ? key.slice(4) : key;
+}
 
 window.storage = {
   async get(key) {
-    const raw = localStorage.getItem(PREFIX + key);
-    if (raw === null) throw new Error("Key not found: " + key);
-    return { key, value: raw, shared: false };
+    const dateKey = stripPrefix(key);
+    const { data, error } = await supabase
+      .from("days")
+      .select("data")
+      .eq("date", dateKey)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) throw new Error("Key not found: " + key);
+    return { key, value: JSON.stringify(data.data), shared: false };
   },
   async set(key, value) {
-    localStorage.setItem(PREFIX + key, value);
+    const dateKey = stripPrefix(key);
+    const { error } = await supabase
+      .from("days")
+      .upsert({ date: dateKey, data: JSON.parse(value), updated_at: new Date().toISOString() });
+    if (error) throw error;
     return { key, value, shared: false };
   },
   async delete(key) {
-    localStorage.removeItem(PREFIX + key);
+    const dateKey = stripPrefix(key);
+    const { error } = await supabase.from("days").delete().eq("date", dateKey);
+    if (error) throw error;
     return { key, deleted: true, shared: false };
   },
   async list(prefix = "") {
-    const keys = Object.keys(localStorage)
-      .filter(k => k.startsWith(PREFIX))
-      .map(k => k.slice(PREFIX.length))
-      .filter(k => k.startsWith(prefix));
-    return { keys, prefix, shared: false };
+    const { data, error } = await supabase.from("days").select("date");
+    if (error) throw error;
+    const dateKeys = (data || []).map(row => "day:" + row.date);
+    const filtered = prefix ? dateKeys.filter(k => k.startsWith(prefix)) : dateKeys;
+    return { keys: filtered, prefix, shared: false };
   }
 };
 
